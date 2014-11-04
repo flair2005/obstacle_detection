@@ -7,12 +7,11 @@ OPENCV_INSTALL_MODULES:=on
 
 include /Users/john/Development/OpenCV-2.4.5-Tegra-sdk-r2/sdk/native/jni/OpenCV.mk
 
-include $(CLEAR_VARS)
-
 LOCAL_C_INCLUDES += ptam 
-LOCAL_CPP_EXTENSION := .cc
+LOCAL_CPP_EXTENSION := .cc .cpp
 LOCAL_MODULE    := native_activity
 LOCAL_SRC_FILES := native.cpp \
+open_cv_helpers.cpp      \
 ptam/ATANCamera.cc       \
 ptam/Bundle.cc           \
 ptam/HomographyInit.cc   \
@@ -25,9 +24,7 @@ ptam/PatchFinder.cc      \
 ptam/Relocaliser.cc      \
 ptam/ShiTomasi.cc        \
 ptam/SmallBlurryImage.cc \
-ptam/System.cc           \
 ptam/Tracker.cc          \
-ptam/VideoSource.cc      \
 
 
 

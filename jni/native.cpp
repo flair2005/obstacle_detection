@@ -6,7 +6,6 @@
 #include <time.h>
 #include <android/log.h>
 
-#include "ATANCamera.h"
 #include <gvars3/instances.h>
 #include <gvars3/gvars3.h>
 #include <cvd/image.h>
@@ -23,23 +22,32 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
-#define  LOG_TAG    "OCV:libnative_activity"
+#include "ptam/ATANCamera.h"
+#include "ptam/Tracker.h"
+#include "ptam/Map.h"
+#include "ptam/MapMaker.h"
+#include "open_cv_helpers.h"
+
+#define  LOG_TAG    "libnative_activity"
 #define  LOGD(...)  __android_log_print(ANDROID_LOG_DEBUG,LOG_TAG,__VA_ARGS__)
 #define  LOGI(...)  __android_log_print(ANDROID_LOG_INFO,LOG_TAG,__VA_ARGS__)
 #define  LOGW(...)  __android_log_print(ANDROID_LOG_WARN,LOG_TAG,__VA_ARGS__)
 #define  LOGE(...)  __android_log_print(ANDROID_LOG_ERROR,LOG_TAG,__VA_ARGS__)
 
+using namespace GVars3;
 
 struct Engine
 {
 	android_app* app;
 	cv::Ptr<cv::VideoCapture> capture;
-	ATANCamera mpCamera;
-
+	ATANCamera* camera;
+	CVD::ImageRef frameSize;
+	Map* map;
+	MapMaker* mapMaker;
+	Tracker* tracker;
 };
 
-static cv::Size calc_optimal_camera_resolution(const char* supported, int width, int height)
-{
+static cv::Size calc_optimal_camera_resolution(const char* supported, int width, int height) {
 	int frame_width = 0;
 	int frame_height = 0;
 
@@ -47,8 +55,7 @@ static cv::Size calc_optimal_camera_resolution(const char* supported, int width,
 	size_t idx = 0;
 	float min_diff = FLT_MAX;
 
-	do
-	{
+	do {
 		int tmp_width;
 		int tmp_height;
 
@@ -60,10 +67,8 @@ static cv::Size calc_optimal_camera_resolution(const char* supported, int width,
 
 		int w_diff = width - tmp_width;
 		int h_diff = height - tmp_height;
-		if ((h_diff >= 0) && (w_diff >= 0))
-		{
-			if ((h_diff <= min_diff) && (tmp_height <= 720))
-			{
+		if ((h_diff >= 0) && (w_diff >= 0)) {
+			if ((h_diff <= min_diff) && (tmp_height <= 720)) {
 				frame_width = tmp_width;
 				frame_height = tmp_height;
 				min_diff = h_diff;
@@ -77,45 +82,38 @@ static cv::Size calc_optimal_camera_resolution(const char* supported, int width,
 	return cv::Size(frame_width, frame_height);
 }
 
-static void engine_setup_tracking(Engine* engine) {
+static void engine_setup_tracking(Engine* engine, CVD::ImageRef frameSize) {
 	// Initialize tracking
-	CVD::ImageRef mirSize;
-	CVD::Image<CVD::Rgb<CVD::byte> > mimFrameRGB;
-	CVD::Image<CVD::byte> mimFrameBW;
 
-    mimFrameBW.resize(mirSize);
-    mimFrameRGB.resize(mirSize);
+	engine->frameSize = frameSize;
+
     // First, check if the camera is calibrated.
     // If not, we need to run the calibration widget.
     Vector<NUMTRACKERCAMPARAMETERS> vTest;
 
-    vTest = GV3::get<Vector<NUMTRACKERCAMPARAMETERS> >("Camera.Parameters", ATANCamera::mvDefaultParams, HIDDEN);
-    ATANCamera mpCamera = new ATANCamera("Camera");
+    //vTest = GV3::get<Vector<NUMTRACKERCAMPARAMETERS> >("Camera.Parameters", ATANCamera::mvDefaultParams, HIDDEN);
+    engine->camera = new ATANCamera("Camera");
     Vector<2> v2;
     if(v2==v2) ;
-    if(vTest == ATANCamera::mvDefaultParams)
-    {
-    	__android_log_print(ANDROID_LOG_INFO,"System", "Camera.Parameters is not set, need to run the CameraCalibrator tool");
-        //cout << endl;
-        //cout << "! Camera.Parameters is not set, need to run the CameraCalibrator tool" << endl;
-        //cout << "  and/or put the Camera.Parameters= line into the appropriate .cfg file." << endl;
-        exit(1);
-    }
+    //if(vTest == ATANCamera::mvDefaultParams) {
+   //j 	LOGI("Camera.Parameters is not set, need to run the CameraCalibrator tool");
+    //}
 
-	Map *mpMap = new Map;
-	MapMaker *mpMapMaker = new MapMaker(*mpMap, *mpCamera);
-	Tracker *mpTracker =new Tracker(mVideoSource.Size(), *mpCamera, *mpMap, *mpMapMaker);
+	engine->map = new Map;
+	engine->mapMaker = new MapMaker(*engine->map, *engine->camera);
+	engine->tracker = new Tracker(frameSize, *engine->camera, *engine->map, *engine->mapMaker);
 }
 
-static void engine_track_frame(Engine* engine, const CVD::Image<CVD::byte> &imFrameBW) {
+static void engine_track_frame(Engine* engine, CVD::Image<CVD::byte> &imFrameBW) {
 	// Convert
+	imFrameBW.resize(engine->frameSize);
 	static gvar3<int> gvnDrawMap("DrawMap", 0, HIDDEN|SILENT);
 	static gvar3<int> gvnDrawAR("DrawAR", 0, HIDDEN|SILENT);
 
-	bool bDrawMap = mpMap->IsGood() && *gvnDrawMap;
-	bool bDrawAR = mpMap->IsGood() && *gvnDrawAR;
+	bool bDrawMap = engine->map->IsGood() && *gvnDrawMap;
+	bool bDrawAR = engine->map->IsGood() && *gvnDrawAR;
 
-	mpTracker->TrackFrame(imFrameBW, !bDrawAR && !bDrawMap);
+	engine->tracker->TrackFrame(imFrameBW, !bDrawAR && !bDrawMap);
 
 }
 
@@ -147,14 +145,12 @@ static void engine_draw_frame(Engine* engine, const cv::Mat& frame)
 	ANativeWindow_unlockAndPost(engine->app->window);
 }
 
-static void engine_handle_cmd(android_app* app, int32_t cmd)
-{
+static void engine_handle_cmd(android_app* app, int32_t cmd) {
+    LOGI("Received command");
 	Engine* engine = (Engine*)app->userData;
-	switch (cmd)
-	{
+	switch (cmd) {
 	case APP_CMD_INIT_WINDOW:
-		if (app->window != NULL)
-		{
+		if (app->window != NULL) {
 			LOGI("APP_CMD_INIT_WINDOW");
 
 			engine->capture = new cv::VideoCapture(0);
@@ -184,11 +180,12 @@ static void engine_handle_cmd(android_app* app, int32_t cmd)
 					(float)view_height/camera_resolution.height);
 
 			if (ANativeWindow_setBuffersGeometry(app->window, (int)(view_width/scale),
-					int(view_height/scale), WINDOW_FORMAT_RGBA_8888) < 0)
-			{
+					int(view_height/scale), WINDOW_FORMAT_RGBA_8888) < 0) {
 				LOGE("Cannot set pixel format!");
 				return;
 			}
+
+			engine_setup_tracking(engine, CVD::ImageRef(camera_resolution.width, camera_resolution.height));
 
 			LOGI("Camera initialized at resoution %dx%d", camera_resolution.width, camera_resolution.height);
 		}
@@ -201,7 +198,14 @@ static void engine_handle_cmd(android_app* app, int32_t cmd)
 	}
 }
 
+static int32_t engine_handle_input(android_app* app, AInputEvent* input) {
+	int32_t inputType = AInputEvent_getType(input);
+	LOGI("Input type: %d", inputType);
+	return 0;
+}
+
 void android_main(android_app* app) {
+    LOGI("Started NativeActivity");
 
 	Engine engine;
 
@@ -211,14 +215,17 @@ void android_main(android_app* app) {
 	memset(&engine, 0, sizeof(engine));
 	app->userData = &engine;
 	app->onAppCmd = engine_handle_cmd;
+	app->onInputEvent = engine_handle_input;
 	engine.app = app;
 
 	float fps = 0;
 	cv::Mat frame_color;
 	cv::Mat frame_bw;
 	std::queue<int64> time_queue;
+	CVD::Image<CVD::byte> cvd_frame_bw;
 
 	// loop waiting for stuff to do.
+    LOGI("Starting  loop");
 	while (1)
 	{
 		// Read all pending events.
@@ -251,7 +258,10 @@ void android_main(android_app* app) {
 				engine.capture->retrieve(frame_bw, CV_CAP_ANDROID_GREY_FRAME);
 			}
 
-			engine_track_frame(&engine, frame_bw);
+			copyMatToCVD(frame_bw, cvd_frame_bw);
+			engine_track_frame(&engine, cvd_frame_bw);
+			const char *message = engine.tracker->GetMessageForUser().c_str();
+			LOGI("%s", message);
 
 			char buffer[256];
 			sprintf(buffer, "Display performance: %dx%d @ %.3f", frame_color.cols, frame_color.rows, fps);

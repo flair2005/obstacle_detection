@@ -12,7 +12,15 @@ ATANCamera::ATANCamera(string sName)
 {
   // The camera name is used to find the camera's parameters in a GVar.
   msName = sName;
-  GV2.Register(mgvvCameraParams, sName+".Parameters", mvDefaultParams, HIDDEN | FATAL_IF_NOT_DEFINED);
+  //GV2.Register(mgvvCameraParams, sName+".Parameters", mvDefaultParams, HIDDEN | FATAL_IF_NOT_DEFINED);
+  GV2.Register(mgvvCameraParams, sName+".Parameters", mvDefaultParams, HIDDEN | SILENT);
+
+  (*mgvvCameraParams)[0] = mvDefaultParams[0];
+  (*mgvvCameraParams)[1] = mvDefaultParams[1];
+  (*mgvvCameraParams)[2] = mvDefaultParams[2];
+  (*mgvvCameraParams)[3] = mvDefaultParams[3];
+  (*mgvvCameraParams)[4] = mvDefaultParams[4];
+
   mvImageSize[0] = 640.0;
   mvImageSize[1] = 480.0;
   RefreshParams();
